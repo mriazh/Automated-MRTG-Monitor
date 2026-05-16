@@ -1,0 +1,4 @@
+Graph-title : 1234 => Contoh Site A (1234)
+Graph-title : 5678 => Contoh Site B (5678)
+Graph-title : 9012 => Contoh Site C (9012)
+Graph-title : 3456 => Contoh Site D (3456)
