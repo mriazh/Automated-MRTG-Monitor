@@ -38,9 +38,6 @@ import helpers
 # ========================================================
 #  STYLE SHEETS (DARK / LIGHT MODE)
 # ========================================================
-# ========================================================
-#  STYLE SHEETS (DARK / LIGHT MODE)
-# ========================================================
 DARK_STYLE = """
 QMainWindow {
     background-color: #0f172a;
@@ -531,10 +528,13 @@ class LiveMonitorApp(QMainWindow):
         self._on_status_update(f"Fetching {current_idx}/{len(self.titles)}: {title}...", "#ffaa22")
 
     def _on_image_ready(self, idx, img_path):
+        if not (0 <= idx < len(self.titles)):
+            logger.warning(f"_on_image_ready: idx out of bounds ({idx})")
+            return
         self.current_image_paths[idx] = img_path
         lbl = self.img_labels[idx]
-        pw = lbl.width()
-        ph = lbl.height()
+        pw = lbl.width() or 800
+        ph = lbl.height() or 600
         
         from PySide6.QtGui import QImage
         image = QImage(img_path)
@@ -550,6 +550,8 @@ class LiveMonitorApp(QMainWindow):
             self.update_labels[idx].setStyleSheet("")
 
     def _on_image_failed(self, idx, reason):
+        if not (0 <= idx < len(self.titles)):
+            return
         self.update_labels[idx].setText(reason)
         self.update_labels[idx].setStyleSheet("color: #ff4444;")
 
@@ -586,13 +588,24 @@ class LiveMonitorApp(QMainWindow):
 
     def closeEvent(self, event):
         """Dipanggil saat window ditutup (misal saat ditekan ESC)"""
+        # Stop worker tanpa blocking GUI thread terlalu lama
         if self.worker and self.worker.isRunning():
             self.worker.stop()
-            self.worker.wait()
-        try:
-            self.driver.quit()
-        except Exception:
-            pass
+            # Tunggu maksimal 2 detik, kalau belum selesai ya sudah terminate
+            if not self.worker.wait(2000):
+                self.worker.terminate()
+                self.worker.wait(1000)
+        
+        # Quit browser di background agar tidak freeze GUI
+        def _quit_browser():
+            try:
+                self.driver.quit()
+            except Exception:
+                pass
+        
+        import threading
+        threading.Thread(target=_quit_browser, daemon=True).start()
+        
         event.accept()
 
 
@@ -765,4 +778,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n\n[*] Dihentikan paksa oleh pengguna (Ctrl+C). Bye!")
+        sys.exit(0)

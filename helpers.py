@@ -40,13 +40,16 @@ logging.basicConfig(
 logger = logging.getLogger("mrtg_monitor")
 
 def validate_url(url):
-    """Ensure URL uses HTTPS for security."""
-    if not url.startswith("https://"):
-        logger.warning(f"URL tidak menggunakan HTTPS: {url}")
-        raise ValueError("PORTAL_URL harus menggunakan HTTPS")
+    """Ensure URL uses HTTPS for security. Returns None if invalid."""
+    if not url or not url.startswith("https://"):
+        logger.warning(f"PORTAL_URL tidak valid atau belum diset (gunakan HTTPS): '{url}'")
+        return None
     return url
 
-PORTAL_URL   = validate_url(os.getenv("PORTAL_URL", "https://portal-internal.domain.com/path/to/graph"))
+_DEFAULT_PORTAL = "https://portal-internal.domain.com/path/to/graph"
+PORTAL_URL = validate_url(os.getenv("PORTAL_URL", "")) or _DEFAULT_PORTAL
+if PORTAL_URL == _DEFAULT_PORTAL:
+    logger.warning("Menggunakan PORTAL_URL default. Pastikan .env sudah dikonfigurasi!")
 MAX_GRAPHS       = int(os.getenv("MAX_GRAPHS", 12))
 ESTIMASI_FETCH   = int(os.getenv("ESTIMASI_FETCH_SECONDS", 20))
 
@@ -96,13 +99,22 @@ def hitung_refresh_interval(jumlah_grafik):
 # ========================================================
 #  WINDOWS API: SEMBUNYIKAN CHROME
 # ========================================================
+# Unique identifier untuk jendela Chrome milik bot (di-inject via document.title)
+_BOT_WINDOW_MARKER = "MRTG_MONITOR_BOT_7x9k2"
+
+
 def cari_dan_hide_chrome(driver):
-    """Cari dan sembunyikan SEMUA jendela Chrome yang terkait Selenium.
+    """Cari dan sembunyikan HANYA jendela Chrome milik Selenium (bot).
+    Menggunakan unique marker di document.title agar tidak mengganggu
+    Chrome pribadi user yang sedang terbuka.
     Return list of HWND yang berhasil disembunyikan."""
     try:
+        # Inject unique marker ke title halaman Selenium
+        driver.execute_script(f"document.title = '{_BOT_WINDOW_MARKER}';")
+        time.sleep(1)  # Beri waktu agar title window terupdate
+
         user32 = ctypes.windll.user32
         SW_HIDE = 0
-        page_title = driver.title or ""
         hidden = []
 
         @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
@@ -113,11 +125,8 @@ def cari_dan_hide_chrome(driver):
                     buf = ctypes.create_unicode_buffer(length + 1)
                     user32.GetWindowTextW(hwnd, buf, length + 1)
                     title = buf.value
-                    # Cocokkan jendela Chrome: judul halaman ada di title,
-                    # ATAU jendela Chrome yang menampilkan halaman monitoring_portal
-                    if (page_title and page_title in title) or \
-                       ("Chrome" in title and "monitoring_portal" in title.lower()) or \
-                       ("Chrome" in title and "mrtg" in title.lower()):
+                    # HANYA hide window yang mengandung marker unik bot
+                    if _BOT_WINDOW_MARKER in title:
                         user32.ShowWindow(hwnd, SW_HIDE)
                         hidden.append(hwnd)
             return True
@@ -163,6 +172,8 @@ def get_ntp_offset():
             response = client.request(server, version=3, timeout=5)
             logger.info(f"Berhasil sync NTP dengan {server}")
             return response.offset
+        except KeyboardInterrupt:
+            raise  # Propagate ke atas agar bisa di-catch di main
         except Exception as e:
             logger.warning(f"Gagal sync NTP dengan {server}: {e}")
             continue
